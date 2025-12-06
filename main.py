@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from pathlib import Path
 import math
 import os
 import requests
@@ -13,9 +14,24 @@ import threading, queue, numpy as np, sounddevice as sd, webrtcvad
 import queue, threading
 
 load_dotenv()
+
+BASE_DIR = Path(__file__).resolve().parent
+
 LLAMA_BASE = os.getenv("LLAMA_BASE", "http://localhost:8080")
 VOICEVOX_BASE = os.getenv("VOICEVOX_BASE", "http://localhost:50021")
-SYSTEM_PROMPT = "あなたは優しく簡潔に話すアシスタントです。返答は短く、敬体で。"
+
+SYSTEM_PROMPT_PATH = os.getenv(
+    "SYSTEM_PROMPT_PATH",
+    str(BASE_DIR / "SYSTEM_PROMPT.md"),
+)
+
+try:
+    with open(SYSTEM_PROMPT_PATH, "r", encoding="utf-8") as f:
+        SYSTEM_PROMPT = f.read().strip()
+except FileNotFoundError:
+    # ファイルがない場合のフォールバック（元のプロンプト）
+    SYSTEM_PROMPT = "あなたは優しく簡潔に話すアシスタントです。返答は短く、敬体で。"
+
 REC_SECONDS = int(os.getenv("REC_SECONDS" , 5))
 TIMEOUT = 2.0
 VAD_SAMPLE_RATE = 16000
