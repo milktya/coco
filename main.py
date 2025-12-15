@@ -1,52 +1,16 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from dotenv import load_dotenv
-from pathlib import Path
 import math
-import os
 import requests
 import shlex
 import subprocess
 import time
 import wave
 import logging
-import threading, queue, numpy as np, sounddevice as sd, webrtcvad
-import queue, threading
+import os, threading, numpy as np, sounddevice as sd, webrtcvad
+import config
 
-load_dotenv()
-
-BASE_DIR = Path(__file__).resolve().parent
-
-LLAMA_BASE = os.getenv("LLAMA_BASE", "http://localhost:8080")
-VOICEVOX_BASE = os.getenv("VOICEVOX_BASE", "http://localhost:50021")
-
-SYSTEM_PROMPT_PATH = os.getenv(
-    "SYSTEM_PROMPT_PATH",
-    str(BASE_DIR / "SYSTEM_PROMPT.md"),
-)
-
-try:
-    with open(SYSTEM_PROMPT_PATH, "r", encoding="utf-8") as f:
-        SYSTEM_PROMPT = f.read().strip()
-except FileNotFoundError:
-    # ファイルがない場合のフォールバック（元のプロンプト）
-    SYSTEM_PROMPT = "あなたは優しく簡潔に話すアシスタントです。返答は短く、敬体で。"
-
-REC_SECONDS = int(os.getenv("REC_SECONDS" , 5))
-TIMEOUT = 2.0
-VAD_SAMPLE_RATE = 16000
-VAD_FRAME_MS = 20              # 10/20/30のいずれか
-VAD_SENSITIVITY = 3            # 0(ゆるめ)〜3(厳しめ)
-SILENCE_TAIL_MS = 500          # 終端とみなす無音継続時間
-LISTEN_ENABLED = True          # 起動と同時に監視する場合はTrue
-INPUT_DEVICE = os.getenv("INPUT_DEVICE")
-INPUT_CHANNELS = int(os.getenv("INPUT_CHANNELS", "2"))  # 2chで取って
-CHANNEL_STRATEGY = os.getenv("CHANNEL_STRATEGY", "max") # "max" / "mean" / "left" / "right"
-PREFER_INPUT = os.getenv("PREFER_INPUT", "UAB-80,USB Audio,pulse,pipewire,default").split(",")
-WANTED_RATES = [int(x) for x in os.getenv("WANTED_RATES", "16000,48000").split(",")]
-AUDIO_Q = queue.Queue(maxsize=8)
-WORKER_THREAD = None
-VAD_THREAD = None
+config.load_config()
 
 app = FastAPI()
 
@@ -54,7 +18,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 
 def vad_worker():
     while True:
-        audio = AUDIO_Q.get()
+        audio = config.AUDIO_Q.get()
         if audio is None:
             break
         try:
@@ -64,7 +28,7 @@ def vad_worker():
             write_wav(path, audio)
             logging.info(f"[vad] saved segment: {path}, samples={len(audio)}")
 
-            whisper_cmd = os.getenv("WHISPER_CMD")
+            whisper_cmd = config.WHISPER_CMD
             cmd = whisper_cmd.format(wav=path, txtbase=f"/tmp/vad_{stamp}")
             logging.info(f"[vad] whisper cmd: {cmd}")
             _run(cmd, timeout=300)
@@ -84,7 +48,7 @@ def vad_worker():
         except Exception as e:
             logging.error(f"[vad] worker error: {e}")
         finally:
-            AUDIO_Q.task_done()
+            config.AUDIO_Q.task_done()
 
 def dbfs(x_int16: np.ndarray) -> float:
     x = x_int16.astype(np.float32) / 32768.0
@@ -96,10 +60,10 @@ def _pick_input_device(req_ch: int):
     cand = [(i, d) for i, d in enumerate(devs) if (d.get("max_input_channels", 0) or 0) >= 1]
 
     def score(name: str) -> int:
-        for k, key in enumerate(PREFER_INPUT):
+        for k, key in enumerate(config.PREFER_INPUT):
             if key and key in name:
                 return k
-        return len(PREFER_INPUT)
+        return len(config.PREFER_INPUT)
     cand.sort(key=lambda x: score(x[1]["name"]))
 
     for idx, d in cand:
@@ -108,7 +72,7 @@ def _pick_input_device(req_ch: int):
             use_ch = min(ch, max_in)
             if use_ch < 1:
                 continue
-            for rate in WANTED_RATES:
+            for rate in config.WANTED_RATES:
                 try:
                     sd.check_input_settings(device=idx, samplerate=rate, channels=use_ch, dtype='int16')
                     return {"device": idx, "name": d["name"], "channels": use_ch,
@@ -123,7 +87,7 @@ def health():
 
     # LLM 健康チェック（軽いGETで十分）
     try:
-        r = requests.get(f"{LLAMA_BASE}/v1/models", timeout=TIMEOUT)
+        r = requests.get(f"{config.LLAMA_BASE}/v1/models", timeout=config.TIMEOUT)
         r.raise_for_status()
         result["llama"] = "up"
     except Exception as e:
@@ -131,7 +95,7 @@ def health():
 
     # VOICEVOX 健康チェック（/speakers が軽くて安定）
     try:
-        r = requests.get(f"{VOICEVOX_BASE}/speakers", timeout=TIMEOUT)
+        r = requests.get(f"{config.VOICEVOX_BASE}/speakers", timeout=config.TIMEOUT)
         r.raise_for_status()
         result["voicevox"] = "up"
     except Exception as e:
@@ -168,7 +132,7 @@ def list_audio_devices():
             "max_input": d.get("max_input_channels", 0),
             "max_output": d.get("max_output_channels", 0),
         })
-    return {"devices": items, "prefer_order": PREFER_INPUT, "wanted_rates": WANTED_RATES}
+    return {"devices": items, "prefer_order": config.PREFER_INPUT, "wanted_rates": config.WANTED_RATES}
 
 @app.post("/listen")
 def listen_and_transcribe():
@@ -182,11 +146,11 @@ def listen_and_transcribe():
 
     # 1) 録音
     # Pulse/pipewire:
-    rec_cmd = f'ffmpeg -y -f pulse -i default -t {REC_SECONDS} -ac 1 -ar 16000 -f wav {wav}'
-    _run(rec_cmd, timeout=REC_SECONDS + 10)
+    rec_cmd = f'ffmpeg -y -f pulse -i default -t {config.REC_SECONDS} -ac 1 -ar 16000 -f wav {wav}'
+    _run(rec_cmd, timeout=config.REC_SECONDS + 10)
 
     # 2) Whisper 実行
-    whisper_cmd = os.getenv("WHISPER_CMD") 
+    whisper_cmd = config.WHISPER_CMD 
     if not whisper_cmd:
         raise HTTPException(status_code=500, detail="WHISPER_CMD が未設定です（.env に書くか、コード内でwhisper_cmdを指定してね）")
 
@@ -224,11 +188,11 @@ def mix_to_mono_int16(arr: np.ndarray) -> np.ndarray:
         return arr[:, 0]  # (N,1) → (N,)
 
     # 2ch以上
-    if CHANNEL_STRATEGY == "left":
+    if config.CHANNEL_STRATEGY == "left":
         return arr[:, 0]
-    if CHANNEL_STRATEGY == "right":
+    if config.CHANNEL_STRATEGY == "right":
         return arr[:, 1]
-    if CHANNEL_STRATEGY == "mean":
+    if config.CHANNEL_STRATEGY == "mean":
         return (arr.astype(np.int32).mean(axis=1)).astype(np.int16)
 
     # 既定: “最大振幅のch” をサンプル毎に選択（符号は保持）
@@ -237,8 +201,8 @@ def mix_to_mono_int16(arr: np.ndarray) -> np.ndarray:
 
 def run_vad_loop():
     # ---- デバイス & 設定決定 ----
-    req_ch = int(os.getenv("INPUT_CHANNELS", "2"))
-    dev_sel = os.getenv("INPUT_DEVICE")  # 数字 or 名前 or 未設定
+    req_ch = config.INPUT_CHANNELS
+    dev_sel = config.INPUT_DEVICE  # 数字 or 名前 or 未設定
     picked = None
 
     if dev_sel:
@@ -262,7 +226,7 @@ def run_vad_loop():
                 use_ch = min(ch, max_in)
                 if use_ch < 1:
                     continue
-                for rate in WANTED_RATES:
+                for rate in config.WANTED_RATES:
                     try:
                         sd.check_input_settings(device=idx, samplerate=rate, channels=use_ch, dtype='int16')
                         ok = {"device": idx, "name": info["name"], "channels": use_ch,
@@ -281,10 +245,10 @@ def run_vad_loop():
 
     global VAD_SAMPLE_RATE
     VAD_SAMPLE_RATE = picked["samplerate"]         # ← WAVのframerateと一致させるため更新
-    vad = webrtcvad.Vad(VAD_SENSITIVITY)
+    vad = webrtcvad.Vad(config.VAD_SENSITIVITY)
 
-    frame_len = int(VAD_SAMPLE_RATE * (VAD_FRAME_MS / 1000.0))
-    silence_limit = int(SILENCE_TAIL_MS / VAD_FRAME_MS)
+    frame_len = int(VAD_SAMPLE_RATE * (config.VAD_FRAME_MS / 1000.0))
+    silence_limit = int(config.SILENCE_TAIL_MS / config.VAD_FRAME_MS)
 
     buffer = []
     speaking = False
@@ -327,8 +291,8 @@ def run_vad_loop():
                             seg_db = dbfs(audio)
                             if dur_ms >= 600 and seg_db > -45:  # 例の簡易ゲート（任意）
                                 try:
-                                    AUDIO_Q.put_nowait(audio.copy())   # ★ ここ大事：copy() で内容固定
-                                    logging.info(f"[vad] enqueued segment len={dur_ms}ms, q={AUDIO_Q.qsize()}, level={seg_db:.1f} dBFS")
+                                    config.AUDIO_Q.put_nowait(audio.copy())   # ★ ここ大事：copy() で内容固定
+                                    logging.info(f"[vad] enqueued segment len={dur_ms}ms, q={config.AUDIO_Q.qsize()}, level={seg_db:.1f} dBFS")
                                 except queue.Full:
                                     logging.warning("[vad] queue full: dropping segment")
         return None, sd.CallbackFlags()
@@ -345,14 +309,14 @@ def run_vad_loop():
     logging.info(f"[vad] using device={picked['device']} name='{picked['name']}', "
                  f"max_in={picked['max_in']} → channels={picked['channels']} rate={picked['samplerate']}")
     with sd.InputStream(**stream_kwargs):
-        while LISTEN_ENABLED:
+        while config.LISTEN_ENABLED:
             time.sleep(0.1)
 
 # FastAPI起動時にバックグラウンドで開始
 @app.on_event("startup")
 def _start_vad_if_enabled():
     global WORKER_THREAD, VAD_THREAD
-    if LISTEN_ENABLED:
+    if config.LISTEN_ENABLED:
         WORKER_THREAD = threading.Thread(target=vad_worker, daemon=True)
         WORKER_THREAD.start()
         VAD_THREAD = threading.Thread(target=run_vad_loop, daemon=True)
@@ -365,10 +329,10 @@ def _graceful_stop():
     LISTEN_ENABLED = False
     # 2) ワーカーへ終了合図（None を入れる）
     try:
-        AUDIO_Q.put_nowait(None)
+        config.AUDIO_Q.put_nowait(None)
     except queue.Full:
         # いっぱいなら一度ブロックしてでも入れる
-        AUDIO_Q.put(None)
+        config.AUDIO_Q.put(None)
 
 class Transcript(BaseModel):
     text: str
@@ -378,22 +342,22 @@ def handle_transcript(t: Transcript):
     payload = {
         "model": "local-model", # llama.cpp側のデフォ名で通ることが多い（未指定でも可な実装も）
         "messages": [
-            {"role":"system","content": SYSTEM_PROMPT},
+            {"role":"system","content": config.SYSTEM_PROMPT},
             {"role":"user","content": t.text}
         ],
         "temperature": 0.9,
         "max_tokens": 256
     }
-    r = requests.post(f"{LLAMA_BASE}/chat/completions", json=payload, timeout=60)
+    r = requests.post(f"{config.LLAMA_BASE}/chat/completions", json=payload, timeout=60)
     r.raise_for_status()
     reply_text = r.json()["choices"][0]["message"]["content"]
 
     # 2) VOICEVOXで合成
     speaker_id = 47  # 好きな話者IDに変更
-    q = requests.post(f"{VOICEVOX_BASE}/audio_query",
+    q = requests.post(f"{config.VOICEVOX_BASE}/audio_query",
                       params={"text": reply_text, "speaker": speaker_id}, timeout=30)
     q.raise_for_status()
-    s = requests.post(f"{VOICEVOX_BASE}/synthesis",
+    s = requests.post(f"{config.VOICEVOX_BASE}/synthesis",
                       params={"speaker": speaker_id}, json=q.json(), timeout=60)
     s.raise_for_status()
 
