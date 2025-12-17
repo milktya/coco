@@ -41,8 +41,7 @@ def load_config():
         with open(SYSTEM_PROMPT_PATH, "r", encoding="utf-8") as f:
             SYSTEM_PROMPT = f.read().strip()
     except FileNotFoundError:
-        # ファイルがない場合のフォールバック（元のプロンプト）
-        SYSTEM_PROMPT = "あなたは優しく簡潔に話すアシスタントです。返答は短く、敬体で。"
+         SYSTEM_PROMPT = "あなたは優しく簡潔に話すアシスタントです。返答は短く、敬体で。"
 
     REC_SECONDS = int(os.getenv("REC_SECONDS",  str(REC_SECONDS)))
     INPUT_DEVICE = os.getenv("INPUT_DEVICE")

@@ -1,5 +1,6 @@
-from fastapi import FastAPI
+from app import create_app
 from pydantic import BaseModel
+import uvicorn
 import math
 import requests
 import shlex
@@ -10,11 +11,10 @@ import logging
 import os, threading, numpy as np, sounddevice as sd, webrtcvad
 import config
 
-config.load_config()
+app = create_app()
 
-app = FastAPI()
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
 
 def vad_worker():
     while True:
@@ -80,29 +80,6 @@ def _pick_input_device(req_ch: int):
                 except Exception:
                     continue
     raise RuntimeError("入力ありのデバイスが見つからない/希望設定で開けない")
-
-@app.get("/health")
-def health():
-    result = {"llama": "down", "voicevox": "down", "ok": False}
-
-    # LLM 健康チェック（軽いGETで十分）
-    try:
-        r = requests.get(f"{config.LLAMA_BASE}/v1/models", timeout=config.TIMEOUT)
-        r.raise_for_status()
-        result["llama"] = "up"
-    except Exception as e:
-        result["llama_error"] = str(e)[:160]
-
-    # VOICEVOX 健康チェック（/speakers が軽くて安定）
-    try:
-        r = requests.get(f"{config.VOICEVOX_BASE}/speakers", timeout=config.TIMEOUT)
-        r.raise_for_status()
-        result["voicevox"] = "up"
-    except Exception as e:
-        result["voicevox_error"] = str(e)[:160]
-
-    result["ok"] = (result["llama"] == "up" and result["voicevox"] == "up")
-    return result
 
 def _run(cmd: str, timeout: int = 60):
     """小さなヘルパー：subprocessを安全に回す"""
