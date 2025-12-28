@@ -4,6 +4,7 @@ import config
 
 router = APIRouter()
 
+
 @router.get("/health")
 def health():
     result = {"llama": "down", "voicevox": "down", "ok": False}
@@ -22,5 +23,5 @@ def health():
     except Exception as e:
         result["voicevox_error"] = str(e)[:160]
 
-    result["ok"] = (result["llama"] == "up" and result["voicevox"] == "up")
+    result["ok"] = result["llama"] == "up" and result["voicevox"] == "up"
     return result
