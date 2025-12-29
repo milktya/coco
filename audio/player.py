@@ -2,6 +2,9 @@ import sounddevice as sd
 import soundfile as sf
 import os
 import config
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def play_wav(wav_path: str):
