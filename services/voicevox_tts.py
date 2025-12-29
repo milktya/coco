@@ -1,9 +1,14 @@
 import requests
+import time
 import config
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def synthesize_to_wav(reply_text: str):
-    speaker_id = config.VOICEVOX_ID  # VOICEVOXのボイスID
+    logger.info("synthesize ready...")
+    speaker_id = config.VOICEVOX_SPEAKER_ID  # VOICEVOXのボイスID
     q = requests.post(
         f"{config.VOICEVOX_BASE}/audio_query",
         params={"text": reply_text, "speaker": speaker_id},
@@ -22,3 +27,4 @@ def synthesize_to_wav(reply_text: str):
     with open(wav_path, "wb") as f:
         f.write(s.content)
     return wav_path
+    logger.info(f"wav_path:{wav_path}")

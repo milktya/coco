@@ -1,8 +1,12 @@
 import requests
 import config
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def chat(transcript: str) -> str:
+    logger.info("llama.cpp ready...")
     # Llama.cppに投げる内容（OpenAI互換）
     payload = {
         "model": "local-model",  # 厳密なモデル名を入れなくてもllama.cpp側のデフォ名でOK
@@ -22,5 +26,6 @@ def chat(transcript: str) -> str:
     # 返答を受信
     r.raise_for_status()
     reply_text = r.json()["choices"][0]["message"]["content"]
+    logger.info(f"reply: {reply_text}")
 
     return reply_text
