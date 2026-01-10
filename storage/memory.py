@@ -48,12 +48,13 @@ def save_message(role: str, content: str, db_path: str = "data/coco.db") -> int:
 
 def load_recent_messages(
     limit: int = 10, db_path: str = "data/coco.db"
-) -> List[Tuple[str, str]]:
+) -> List[Tuple[str, str, str]]:
     conn = sqlite3.connect(db_path)
     try:
         cur = conn.cursor()
         cur.execute(
-            "SELECT role, content FROM messages ORDER BY id DESC LIMIT ?", (limit,)
+            "SELECT role, content, created_at_jst FROM messages ORDER BY id DESC LIMIT ?",
+            (limit,),
         )
         rows = cur.fetchall()
         rows.reverse()  # 返り値: [(role, content), ...] で古い→新しい順に並べる
